@@ -66,7 +66,7 @@ def get_aioclient(loop=None):
 def ls(s3path, delimiter='/', recursive=False):
     client = get_aioclient()
     return (asyncio.get_event_loop()
-                      .run_until_complete(list_files(client, s3path, delimiter)))
+                      .run_until_complete(list_files(client, s3path, delimiter=delimiter, recursive=recursive)))
 
 
 def du(s3path, delimiter='/', recursive=False):
@@ -117,19 +117,30 @@ async def disk_usage(client, s3path, delimiter='/', total_size=0, queue=None):
     return total_size
 
 
-async def list_files(client, s3path, delimiter='/'):
+async def list_files(client, s3path, delimiter='/', recursive=False, queue=None):
     bucket, prefix = bucket_and_key_from_path(s3path)
     objects = await client.list_objects(Bucket=bucket, Prefix=prefix, Delimiter=delimiter)
     
-    # if objects['IsTruncated']:
-    #     raise ValueError("Returned more than (%s) objects. Increase max keys argument" 
-    #         % objects['MaxKeys'])
-    # if objects['ResponseMetadata']['HTTPStatusCode'] != 200:
-    #     raise ValueError
+    if objects['IsTruncated']:
+        raise ValueError("Returned more than (%s) objects. Increase max keys argument" 
+            % objects['MaxKeys'])
+    if objects['ResponseMetadata']['HTTPStatusCode'] != 200:
+        raise ValueError
     bucket = objects['Name']
     directories = [S3Directory(bucket, obj['Prefix']) for obj in objects.get('CommonPrefixes', [])]
     files = [S3File.from_dict(bucket, obj) for obj in objects.get('Contents', [])]
-    return directories + files
+    found_files_and_dirs = directories + files
+
+    if recursive:
+        if queue is None:
+            queue = collections.deque()
+        for _dir in directories:
+            queue.append(_dir.path)
+        while queue:
+            _dir = queue.pop()
+            found_files_and_dirs += await list_files(client, _dir, delimiter, recursive, queue)
+
+    return found_files_and_dirs
 
 
 class S3File:
