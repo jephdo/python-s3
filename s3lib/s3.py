@@ -64,10 +64,13 @@ def get_aioclient(loop=None):
 
 
 def ls(s3path, delimiter='/', recursive=False):
-    client = get_aioclient()
-    return (asyncio.get_event_loop()
-                      .run_until_complete(list_files(client, s3path, delimiter=delimiter, recursive=recursive)))
-
+    try:
+        client = get_aioclient()
+        files = (asyncio.get_event_loop()
+                        .run_until_complete(list_files(client, s3path, delimiter=delimiter, recursive=recursive)))
+    finally:
+        client.close()
+    return files
 
 def du(s3path, delimiter='/', recursive=False):
     objects = ls(s3path, delimiter, recursive=False)
@@ -143,6 +146,8 @@ async def list_files(client, s3path, delimiter='/', recursive=False, queue=None)
     return found_files_and_dirs
 
 
+
+
 class S3File:
 
     def __init__(self, bucket, key, last_modified, size, storage_class):
@@ -169,6 +174,15 @@ class S3File:
 
     def download(self, filename=None):
         pass
+
+    # async def stream(self, client, chunksize=262144):
+    #     content_stream = client.get_object(Bucket=self.bucket, Key=self.key)['Body']
+
+    #     while True:
+    #         chunk = await content_stream.read(chunksize)
+    #         if not chunk:
+    #             break
+    #         yield chunk
 
     def head(self, lines_to_retrieve=10, chunksize=16384, line_separator='\n'):
         client = get_client()
