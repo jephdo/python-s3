@@ -5,6 +5,7 @@
 import os
 import re
 import collections
+import fnmatch
 import logging
 import pathlib
 
@@ -45,6 +46,39 @@ def _partition(pred, iterable):
     return trues, falses
 
 
+def _is_partial_match(s3path, wildcard_path, delimiter='/'):
+    """Return True if the s3path matches a wildcard "partially". That is while
+    recursively walking directories, does this path match the wildcard up 
+    until its respective directory? E.g.:
+
+    >>> is_partial_match("s3://br-user/jeph/byom/", "s3://br-user/jeph/*/*.txt")
+    True
+    >>> is_partial_match("s3:/br-user/jeph/", "s3://br-user/jeph/*/*.txt")
+    True
+    >>> is_partial_match("s3://br-user/byom/hello.tsv", "s3://br-user/jeph/*/*.txt")
+    False
+    """
+    # we need to normalize both paths to end the same by
+    # removing trailing slashes from directories and add a 
+    # wildcard to the matching path. It's necessary for when we split 
+    # the path into parts:
+    if s3path.endswith(delimiter):
+        s3path = s3path[0:-1]
+    if wildcard_path.endswith(delimiter):
+        wildcard_path += '*'
+    
+    s3parts = s3path.replace('s3://', '').split(delimiter)
+    wildcardparts = wildcard_path.replace('s3://', '').split(delimiter)
+    min_part_length = min(len(s3parts), len(wildcardparts))
+
+    a = 's3://' + delimiter.join(s3parts[:min_part_length])
+    b = 's3://' + delimiter.join(wildcardparts[:min_part_length])
+    is_match = fnmatch.fnmatch(a, b)
+    logger.debug("Matching path (%s)[%s] to (%s)[%s]. %s", s3path, a, wildcard_path, 
+        b, "Paths partially match." if is_match else "Paths do not partially match.")
+    return is_match
+
+
 def bucket_and_key_from_path(s3path):
     """Returns the bucket and key as a tuple from an S3 filepath."""
     m = re.compile("s3://([^/]+)/(.*)").match(s3path)
@@ -63,14 +97,32 @@ def get_aioclient(loop=None):
     return session.create_client('s3')
 
 
-def ls(s3path, delimiter='/', recursive=False):
+def ls(s3path, delimiter='/', matching_path=None, recursive=False):
+    if '*' in s3path:
+        # if there are wildcards in the s3path then the initial `ls` will 
+        # go up until the first wildcard e.g. `s3://br-user/jep*/*.txt` => first 
+        # call to ls should be `s3://br-user/jep`
+        matching_path = s3path
+        recursive = True
+        s3path = s3path[:s3path.find('*')]
+        logger.debug("There exist wildcards in (%s). Initially listing objects under %s", matching_path, s3path)
+
     try:
         client = get_aioclient()
         files = (asyncio.get_event_loop()
-                        .run_until_complete(list_files(client, s3path, delimiter=delimiter, recursive=recursive)))
+                        .run_until_complete(list_files(client, s3path, delimiter=delimiter, 
+                            recursive=recursive, matching_path=matching_path)))
     finally:
         client.close()
-    return files
+
+    # this is a final filter to make sure all objects return match the wildcard path
+    # the calls to `list_files` will superfluously add directories that partially 
+    # match at the time, but we don't want in the final output.
+    if matching_path is not None:
+        files = [f for f in files if fnmatch.fnmatch(f.path, matching_path)]
+
+    return list(sorted(files, key=lambda x: x.path))
+
 
 def du(s3path, delimiter='/', recursive=False):
     objects = ls(s3path, delimiter, recursive=False)
@@ -120,7 +172,7 @@ async def disk_usage(client, s3path, delimiter='/', total_size=0, queue=None):
     return total_size
 
 
-async def list_files(client, s3path, delimiter='/', recursive=False, queue=None):
+async def list_files(client, s3path, delimiter='/', recursive=False, queue=None, matching_path=None):
     bucket, prefix = bucket_and_key_from_path(s3path)
     objects = await client.list_objects(Bucket=bucket, Prefix=prefix, Delimiter=delimiter)
     
@@ -132,20 +184,28 @@ async def list_files(client, s3path, delimiter='/', recursive=False, queue=None)
     bucket = objects['Name']
     directories = [S3Directory(bucket, obj['Prefix']) for obj in objects.get('CommonPrefixes', [])]
     files = [S3File.from_dict(bucket, obj) for obj in objects.get('Contents', [])]
-    found_files_and_dirs = directories + files
+    if matching_path is not None:
+        found_files_and_dirs = [x for x in directories + files if _is_partial_match(x.path, matching_path)]
+    else:
+        found_files_and_dirs =  directories + files
+    # print(s3path, len(found_files_and_dirs))
 
     if recursive:
         if queue is None:
             queue = collections.deque()
         for _dir in directories:
-            queue.append(_dir.path)
+            # this is kind of kludgy that I have to do a partial match again here when 
+            # I did it before:
+            if matching_path is not None: 
+                if _is_partial_match(_dir.path, matching_path):
+                    queue.append(_dir.path)
+            else:
+                queue.append(_dir.path)
         while queue:
             _dir = queue.pop()
-            found_files_and_dirs += await list_files(client, _dir, delimiter, recursive, queue)
+            found_files_and_dirs += await list_files(client, _dir, delimiter, recursive, queue, matching_path)
 
     return found_files_and_dirs
-
-
 
 
 class S3File:
