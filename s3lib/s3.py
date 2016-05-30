@@ -6,6 +6,7 @@ import os
 import re
 import collections
 import fnmatch
+import functools
 import logging
 import pathlib
 
@@ -121,7 +122,7 @@ def ls(s3path, delimiter='/', matching_path=None, recursive=False):
     if matching_path is not None:
         files = [f for f in files if fnmatch.fnmatch(f.path, matching_path)]
 
-    return list(sorted(files, key=lambda x: x.path))
+    return list(sorted(files))
 
 
 def du(s3path, delimiter='/', recursive=False):
@@ -208,6 +209,7 @@ async def list_files(client, s3path, delimiter='/', recursive=False, queue=None,
     return found_files_and_dirs
 
 
+@functools.total_ordering
 class S3File:
 
     def __init__(self, bucket, key, last_modified, size, storage_class):
@@ -274,6 +276,14 @@ class S3File:
         storage_class = _dict['StorageClass']
         return cls(bucket, key, last_modified, size, storage_class)
 
+    def __eq__(self, other):
+        return self.path == other.path
+
+    def __lt__(self, other):
+        if isinstance(other, S3Directory):
+            return False
+        return self.path < other.path
+
     def __repr__(self):
         path = self.path
         filesize = self.filesize
@@ -282,6 +292,7 @@ class S3File:
         return """<class {cls_name} {path}, {filesize}, {last_modified}>""".format(**vars())
 
 
+@functools.total_ordering
 class S3Directory:
     """Representation of a directory on S3.
 
@@ -299,6 +310,14 @@ class S3Directory:
 
     def download(self, recursive=False):
         pass
+
+    def __eq__(self, other):
+        return self.path == other.path
+
+    def __lt__(self, other):
+        if isinstance(other, S3File):
+            return True
+        return self.path < other.path
 
     def __repr__(self):
         s3path = self.path
