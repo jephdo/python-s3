@@ -173,38 +173,38 @@ async def disk_usage(client, s3path, delimiter='/', total_size=0, queue=None):
     return total_size
 
 
-async def list_files(client, s3path, delimiter='/', recursive=False, queue=None, matching_path=None):
+async def list_files(client, s3path, delimiter='/', recursive=False, queue=None, 
+                     matching_path=None, page_size=1000):
     bucket, prefix = bucket_and_key_from_path(s3path)
-    objects = await client.list_objects(Bucket=bucket, Prefix=prefix, Delimiter=delimiter)
-    
-    if objects['IsTruncated']:
-        raise ValueError("Returned more than (%s) objects. Increase max keys argument" 
-            % objects['MaxKeys'])
-    if objects['ResponseMetadata']['HTTPStatusCode'] != 200:
-        raise ValueError
-    bucket = objects['Name']
-    directories = [S3Directory(bucket, obj['Prefix']) for obj in objects.get('CommonPrefixes', [])]
-    files = [S3File.from_dict(bucket, obj) for obj in objects.get('Contents', [])]
-    if matching_path is not None:
-        found_files_and_dirs = [x for x in directories + files if _is_partial_match(x.path, matching_path)]
-    else:
-        found_files_and_dirs =  directories + files
-    # print(s3path, len(found_files_and_dirs))
+    paginator = client.get_paginator('list_objects')
 
-    if recursive:
-        if queue is None:
-            queue = collections.deque()
-        for _dir in directories:
-            # this is kind of kludgy that I have to do a partial match again here when 
-            # I did it before:
-            if matching_path is not None: 
-                if _is_partial_match(_dir.path, matching_path):
+    async for page in paginator.paginate(Bucket=bucket, Prefix=prefix, 
+                                         Delimiter=delimiter, PaginationConfig={'PageSize': page_size}):
+        assert page['ResponseMetadata']['HTTPStatusCode'] == 200
+
+        bucket = page['Name']
+        directories = [S3Directory(bucket, obj['Prefix']) for obj in page.get('CommonPrefixes', [])]
+        files = [S3File.from_dict(bucket, obj) for obj in page.get('Contents', [])]
+        if matching_path is not None:
+            found_files_and_dirs = [x for x in directories + files if _is_partial_match(x.path, matching_path)]
+        else:
+            found_files_and_dirs = directories + files
+        # print(s3path, len(found_files_and_dirs))
+
+        if recursive:
+            if queue is None:
+                queue = collections.deque()
+            for _dir in directories:
+                # this is kind of kludgy that I have to do a partial match again here when 
+                # I did it before:
+                if matching_path is not None: 
+                    if _is_partial_match(_dir.path, matching_path):
+                        queue.append(_dir.path)
+                else:
                     queue.append(_dir.path)
-            else:
-                queue.append(_dir.path)
-        while queue:
-            _dir = queue.pop()
-            found_files_and_dirs += await list_files(client, _dir, delimiter, recursive, queue, matching_path)
+            while queue:
+                _dir = queue.pop()
+                found_files_and_dirs += await list_files(client, _dir, delimiter, recursive, queue, matching_path, page_size)
 
     return found_files_and_dirs
 
