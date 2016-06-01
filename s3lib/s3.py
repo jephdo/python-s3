@@ -131,18 +131,6 @@ def du(s3path, delimiter='/', recursive=False):
     files, directories = _partition(lambda x: isinstance(x, S3File), objects)
     return sum(f.size for f in files)
 
-    # if recursive:
-    #     client = get_aioclient()
-    #     for _dir in directories:
-    #         logger.debug("Adding %s to queue of directories to search" % _dir.path)
-    #     subdirs = [disk_usage(client, _dir.path, delimiter) for _dir in directories]
-    #     coroutines = asyncio.gather(*subdirs)
-    #     subdirectory_sizes = (asyncio.get_event_loop()
-    #                                  .run_until_complete(coroutines))
-    #     total_size += sum(subdirectory_sizes)
-
-    # return total_size
-
 
 def get():
     pass
@@ -150,27 +138,6 @@ def get():
 
 def put():
     pass
-
-
-
-# async def disk_usage(client, s3path, delimiter='/', total_size=0, queue=None):
-#     if queue is None:
-#         queue = collections.deque()
-    
-#     objects = await list_files(client, s3path, delimiter)
-    
-#     files, directories = _partition(lambda x: isinstance(x, S3File), objects)
-    
-
-#     for _dir in directories:
-#         logger.debug("Adding %s to queue of directories to search" % _dir.path)
-#         queue.append(_dir.path)
-
-#     while queue:
-#         _dir = queue.pop()
-#         total_size += await disk_usage(client, _dir, delimiter=delimiter, queue=queue)
-#     total_size += sum(f.size for f in files)
-#     return total_size
 
 
 async def list_files(client, s3path, delimiter='/', recursive=False,
@@ -186,14 +153,11 @@ async def list_files(client, s3path, delimiter='/', recursive=False,
         bucket = page['Name']
         directories = [S3Directory(bucket, obj['Prefix']) for obj in page.get('CommonPrefixes', [])]
         files = [S3File.from_dict(bucket, obj) for obj in page.get('Contents', [])]
-        # if prefix.endswith('jeph/spark/stocks/'):
-        #     print('num_files', len(files))
 
         if matching_path is not None:
             found_files_and_dirs += [x for x in directories + files if _is_partial_match(x.path, matching_path)]
         else:
             found_files_and_dirs += directories + files
-        # print(s3path, len(found_files_and_dirs))
 
     if recursive:
         queue = []
@@ -207,10 +171,9 @@ async def list_files(client, s3path, delimiter='/', recursive=False,
             else:
                 queue.append(_dir.path)
                 logger.debug("Adding directory (%s) to queue", _dir.path)
+
         while queue:
             _dir = queue.pop()
-            # if _dir.endswith('jeph/spark/stocks/'):
-            #     print('jeph/spark/stocks/')
             found_files_and_dirs += await list_files(client, _dir, delimiter, 
                 recursive, matching_path, page_size)
 
