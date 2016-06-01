@@ -1,7 +1,3 @@
-# problems if ls has more than 1k objects
-# then disk usage is wrong because it only does 1k objects
-
-#i'm double counting in disk usage somewhere
 import os
 import re
 import collections
