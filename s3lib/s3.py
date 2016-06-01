@@ -212,12 +212,18 @@ async def list_files(client, s3path, delimiter='/', recursive=False, queue=None,
 @functools.total_ordering
 class S3File:
 
-    def __init__(self, bucket, key, last_modified, size, storage_class):
+    def __init__(self, bucket, key, last_modified, size, storage_class, entity_tag,
+                 owner_name, owner_id):
         self.bucket = bucket
         self.key = key
         self.last_modified = last_modified
         self.size = size
         self.storage_class = storage_class
+        # hash of the object
+        # http://docs.aws.amazon.com/AmazonS3/latest/API/RESTCommonResponseHeaders.html
+        self.entity_tag = entity_tag
+        self.owner_name = owner_name
+        self.owner_id = owner_id
 
     @property
     def path(self):
@@ -274,7 +280,11 @@ class S3File:
         last_modified = _dict['LastModified']
         size = _dict['Size']
         storage_class = _dict['StorageClass']
-        return cls(bucket, key, last_modified, size, storage_class)
+        entity_tag = _dict['ETag'].replace('"', '')
+        owner_name = _dict['Owner']['DisplayName']
+        owner_id = _dict['Owner']['ID']
+        return cls(bucket, key, last_modified, size, storage_class, entity_tag, 
+            owner_name, owner_id)
 
     def __eq__(self, other):
         return self.path == other.path
