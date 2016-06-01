@@ -117,27 +117,31 @@ def ls(s3path, delimiter='/', matching_path=None, recursive=False):
     # match at the time, but we don't want in the final output.
     if matching_path is not None:
         files = [f for f in files if fnmatch.fnmatch(f.path, matching_path)]
+    # if recursive, don't show directories. Directories are only useful
+    # to show for a "top-level" `ls`
+    if recursive:
+        files = [f for f in files if isinstance(f, S3File)]
 
     return list(sorted(files))
 
 
 def du(s3path, delimiter='/', recursive=False):
-    objects = ls(s3path, delimiter, recursive=False)
+    objects = ls(s3path, delimiter, recursive=recursive)
 
     files, directories = _partition(lambda x: isinstance(x, S3File), objects)
-    total_size = sum(f.size for f in files)
+    return sum(f.size for f in files)
 
-    if recursive:
-        client = get_aioclient()
-        for _dir in directories:
-            logger.debug("Adding %s to queue of directories to search" % _dir.path)
-        subdirs = [disk_usage(client, _dir.path, delimiter) for _dir in directories]
-        coroutines = asyncio.gather(*subdirs)
-        subdirectory_sizes = (asyncio.get_event_loop()
-                                     .run_until_complete(coroutines))
-        total_size += sum(subdirectory_sizes)
+    # if recursive:
+    #     client = get_aioclient()
+    #     for _dir in directories:
+    #         logger.debug("Adding %s to queue of directories to search" % _dir.path)
+    #     subdirs = [disk_usage(client, _dir.path, delimiter) for _dir in directories]
+    #     coroutines = asyncio.gather(*subdirs)
+    #     subdirectory_sizes = (asyncio.get_event_loop()
+    #                                  .run_until_complete(coroutines))
+    #     total_size += sum(subdirectory_sizes)
 
-    return total_size
+    # return total_size
 
 
 def get():
@@ -149,31 +153,32 @@ def put():
 
 
 
-async def disk_usage(client, s3path, delimiter='/', total_size=0, queue=None):
-    if queue is None:
-        queue = collections.deque()
+# async def disk_usage(client, s3path, delimiter='/', total_size=0, queue=None):
+#     if queue is None:
+#         queue = collections.deque()
     
-    objects = await list_files(client, s3path, delimiter)
+#     objects = await list_files(client, s3path, delimiter)
     
-    files, directories = _partition(lambda x: isinstance(x, S3File), objects)
+#     files, directories = _partition(lambda x: isinstance(x, S3File), objects)
     
 
-    for _dir in directories:
-        logger.debug("Adding %s to queue of directories to search" % _dir.path)
-        queue.append(_dir.path)
+#     for _dir in directories:
+#         logger.debug("Adding %s to queue of directories to search" % _dir.path)
+#         queue.append(_dir.path)
 
-    while queue:
-        _dir = queue.pop()
-        total_size += await disk_usage(client, _dir, delimiter=delimiter, queue=queue)
-    total_size += sum(f.size for f in files)
-    return total_size
+#     while queue:
+#         _dir = queue.pop()
+#         total_size += await disk_usage(client, _dir, delimiter=delimiter, queue=queue)
+#     total_size += sum(f.size for f in files)
+#     return total_size
 
 
-async def list_files(client, s3path, delimiter='/', recursive=False, queue=None, 
+async def list_files(client, s3path, delimiter='/', recursive=False,
                      matching_path=None, page_size=1000):
     bucket, prefix = bucket_and_key_from_path(s3path)
     paginator = client.get_paginator('list_objects')
 
+    found_files_and_dirs = []
     async for page in paginator.paginate(Bucket=bucket, Prefix=prefix, 
                                          Delimiter=delimiter, PaginationConfig={'PageSize': page_size}):
         assert page['ResponseMetadata']['HTTPStatusCode'] == 200
@@ -181,26 +186,33 @@ async def list_files(client, s3path, delimiter='/', recursive=False, queue=None,
         bucket = page['Name']
         directories = [S3Directory(bucket, obj['Prefix']) for obj in page.get('CommonPrefixes', [])]
         files = [S3File.from_dict(bucket, obj) for obj in page.get('Contents', [])]
+        # if prefix.endswith('jeph/spark/stocks/'):
+        #     print('num_files', len(files))
+
         if matching_path is not None:
-            found_files_and_dirs = [x for x in directories + files if _is_partial_match(x.path, matching_path)]
+            found_files_and_dirs += [x for x in directories + files if _is_partial_match(x.path, matching_path)]
         else:
-            found_files_and_dirs = directories + files
+            found_files_and_dirs += directories + files
         # print(s3path, len(found_files_and_dirs))
 
-        if recursive:
-            if queue is None:
-                queue = collections.deque()
-            for _dir in directories:
-                # this is kind of kludgy that I have to do a partial match again here when 
-                # I did it before:
-                if matching_path is not None: 
-                    if _is_partial_match(_dir.path, matching_path):
-                        queue.append(_dir.path)
-                else:
+    if recursive:
+        queue = []
+        for _dir in directories:
+            # this is kind of kludgy that I have to do a partial match again here when 
+            # I did it before:
+            if matching_path is not None: 
+                if _is_partial_match(_dir.path, matching_path):
                     queue.append(_dir.path)
-            while queue:
-                _dir = queue.pop()
-                found_files_and_dirs += await list_files(client, _dir, delimiter, recursive, queue, matching_path, page_size)
+                    logger.debug("Adding directory (%s) to queue", _dir.path)
+            else:
+                queue.append(_dir.path)
+                logger.debug("Adding directory (%s) to queue", _dir.path)
+        while queue:
+            _dir = queue.pop()
+            # if _dir.endswith('jeph/spark/stocks/'):
+            #     print('jeph/spark/stocks/')
+            found_files_and_dirs += await list_files(client, _dir, delimiter, 
+                recursive, matching_path, page_size)
 
     return found_files_and_dirs
 
