@@ -15,7 +15,7 @@ def cli():
 @click.option('--human', '-h', is_flag=True, help="Show filesize as human readable format.")
 def ls(s3path, recursive, human):
     """List files under s3path"""
-    for file in s3lib.ls(s3path, recursive=recursive):
+    for file in sorted(s3lib.ls(s3path, recursive=recursive)):
         last_modified = file.last_modified if hasattr(file, 'last_modified') else None
         if last_modified is not None:
             last_modified = last_modified.strftime('%b %d %Y %H:%M')

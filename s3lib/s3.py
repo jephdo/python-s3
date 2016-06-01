@@ -122,7 +122,7 @@ def ls(s3path, delimiter='/', matching_path=None, recursive=False):
     if recursive:
         files = [f for f in files if isinstance(f, S3File)]
 
-    return list(sorted(files))
+    return files
 
 
 def du(s3path, delimiter='/', recursive=False):
