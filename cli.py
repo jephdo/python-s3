@@ -10,12 +10,18 @@ def cli():
 
 
 @cli.command()
-@click.argument('s3path', type=str)
+@click.argument('s3path', type=str, default='')
 @click.option('--recursive', '-r', is_flag=True, help="Recursively walk through files.")
 @click.option('--human', '-h', is_flag=True, help="Show filesize as human readable format.")
 def ls(s3path, recursive, human):
     """List files under s3path"""
-    for file in sorted(s3lib.ls(s3path, recursive=recursive)):
+
+    if not s3path:
+        files = s3lib.list_buckets()
+    else:
+        files = s3lib.ls(s3path, recursive=recursive)
+
+    for file in sorted(files):
         last_modified = file.last_modified if hasattr(file, 'last_modified') else None
         if last_modified is not None:
             last_modified = last_modified.strftime('%b %d %Y %H:%M')

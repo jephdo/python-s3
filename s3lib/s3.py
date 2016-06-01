@@ -10,7 +10,7 @@ import asyncio
 import aiobotocore
 import botocore
 
-__all__ = ['ls', 'du', 'get', 'put', 'bucket_and_key_from_path']
+__all__ = ['ls', 'du', 'get', 'put', 'bucket_and_key_from_path', 'list_buckets']
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +138,19 @@ def get():
 
 def put():
     pass
+
+def list_buckets():
+    # try:
+    client = get_client()
+    response = client.list_buckets()
+    # finally:
+        # client.close()
+        # pass
+
+    buckets = []
+    for bucket in response['Buckets']:
+        buckets.append(S3Directory(bucket['Name'], prefix=''))
+    return buckets
 
 
 async def list_files(client, s3path, delimiter='/', recursive=False,
