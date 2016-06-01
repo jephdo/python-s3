@@ -160,22 +160,23 @@ async def list_files(client, s3path, delimiter='/', recursive=False,
             found_files_and_dirs += directories + files
 
     if recursive:
-        queue = []
+        subdirs_to_traverse = []
         for _dir in directories:
             # this is kind of kludgy that I have to do a partial match again here when 
             # I did it before:
             if matching_path is not None: 
                 if _is_partial_match(_dir.path, matching_path):
-                    queue.append(_dir.path)
-                    logger.debug("Adding directory (%s) to queue", _dir.path)
+                    subdirs_to_traverse.append(_dir.path)
+                    logger.debug("Adding directory (%s) to subdirs_to_traverse", _dir.path)
             else:
-                queue.append(_dir.path)
-                logger.debug("Adding directory (%s) to queue", _dir.path)
+                subdirs_to_traverse.append(_dir.path)
+                logger.debug("Adding directory (%s) to subdirs_to_traverse", _dir.path)
 
-        while queue:
-            _dir = queue.pop()
-            found_files_and_dirs += await list_files(client, _dir, delimiter, 
-                recursive, matching_path, page_size)
+        coros = [list_files(client, subdir, delimiter, recursive, matching_path, page_size) 
+                    for subdir in subdirs_to_traverse]
+
+        for next_to_complete in asyncio.as_completed(coros):
+            found_files_and_dirs += await next_to_complete
 
     return found_files_and_dirs
 
